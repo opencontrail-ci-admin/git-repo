@@ -259,12 +259,10 @@ class RemoteSpec(object):
   def __init__(self,
                name,
                url = None,
-               review = None,
-               revision = None):
+               review = None):
     self.name = name
     self.url = url
     self.review = review
-    self.revision = revision
 
 class RepoHook(object):
   """A RepoHook contains information about a script to run as a hook.
@@ -440,8 +438,7 @@ class RepoHook(object):
       # and  convert to a HookError w/ just the failing traceback.
       context = {}
       try:
-        exec(compile(open(self._script_fullpath).read(),
-                     self._script_fullpath, 'exec'), context)
+        execfile(self._script_fullpath, context)
       except Exception:
         raise HookError('%s\nFailed to import %s hook; see traceback above.' % (
                         traceback.format_exc(), self._hook_type))
@@ -1660,8 +1657,7 @@ class Project(object):
 
       remote = RemoteSpec(self.remote.name,
                           url = url,
-                          review = self.remote.review,
-                          revision = self.remote.revision)
+                          review = self.remote.review)
       subproject = Project(manifest = self.manifest,
                            name = name,
                            remote = remote,
@@ -1705,7 +1701,6 @@ class Project(object):
 
     if command.Wait() != 0:
       raise GitError('git archive %s: %s' % (self.name, command.stderr))
-
 
   def _RemoteFetch(self, name=None,
                    current_branch_only=False,
@@ -1809,30 +1804,19 @@ class Project(object):
     else:
       cmd.append('--tags')
 
-    spec = []
     if not current_branch_only:
       # Fetch whole repo
-      spec.append(str((u'+refs/heads/*:') + remote.ToLocal('refs/heads/*')))
+      cmd.append(str((u'+refs/heads/*:') + remote.ToLocal('refs/heads/*')))
     elif tag_name is not None:
-      spec.append('tag')
-      spec.append(tag_name)
+      cmd.append('tag')
+      cmd.append(tag_name)
     else:
       branch = self.revisionExpr
       if is_sha1:
         branch = self.upstream
       if branch.startswith(R_HEADS):
         branch = branch[len(R_HEADS):]
-      spec.append(str((u'+refs/heads/%s:' % branch) + remote.ToLocal('refs/heads/%s' % branch)))
-    cmd.extend(spec)
-
-    shallowfetch = self.config.GetString('repo.shallowfetch')
-    if shallowfetch and shallowfetch != ' '.join(spec):
-      GitCommand(self, ['fetch', '--unshallow', name] + shallowfetch.split(),
-                 bare=True, ssh_proxy=ssh_proxy).Wait()
-    if depth:
-        self.config.SetString('repo.shallowfetch', ' '.join(spec))
-    else:
-        self.config.SetString('repo.shallowfetch', None)
+      cmd.append(str((u'+refs/heads/%s:' % branch) + remote.ToLocal('refs/heads/%s' % branch)))
 
     ok = False
     for _i in range(2):
@@ -2217,14 +2201,6 @@ class Project(object):
         if name in symlink_dirs and not os.path.lexists(src):
           os.makedirs(src)
 
-        # If the source file doesn't exist, ensure the destination
-        # file doesn't either.
-        if name in symlink_files and not os.path.lexists(src):
-          try:
-            os.remove(dst)
-          except OSError:
-            pass
-
         if name in to_symlink:
           os.symlink(os.path.relpath(src, os.path.dirname(dst)), dst)
         elif copy_all and not os.path.islink(dst):
@@ -2345,8 +2321,8 @@ class Project(object):
           out = iter(out[:-1].split('\0'))  # pylint: disable=W1401
           while out:
             try:
-              info = next(out)
-              path = next(out)
+              info = out.next()
+              path = out.next()
             except StopIteration:
               break
 
@@ -2372,7 +2348,7 @@ class Project(object):
             info = _Info(path, *info)
             if info.status in ('R', 'C'):
               info.src_path = info.path
-              info.path = next(out)
+              info.path = out.next()
             r[info.path] = info
         return r
       finally:

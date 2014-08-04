@@ -15,8 +15,8 @@
 
 from __future__ import print_function
 
-import json
 import os
+import pickle
 import re
 import subprocess
 import sys
@@ -80,7 +80,7 @@ class GitConfig(object):
     return cls(configfile = os.path.join(gitdir, 'config'),
                defaults = defaults)
 
-  def __init__(self, configfile, defaults=None, jsonFile=None):
+  def __init__(self, configfile, defaults=None, pickleFile=None):
     self.file = configfile
     self.defaults = defaults
     self._cache_dict = None
@@ -88,11 +88,12 @@ class GitConfig(object):
     self._remotes = {}
     self._branches = {}
 
-    self._json = jsonFile
-    if self._json is None:
-      self._json = os.path.join(
+    if pickleFile is None:
+      self._pickle = os.path.join(
         os.path.dirname(self.file),
-        '.repo_' + os.path.basename(self.file) + '.json')
+        '.repopickle_' + os.path.basename(self.file))
+    else:
+      self._pickle = pickleFile
 
   def Has(self, name, include_defaults = True):
     """Return true if this configuration file has the key.
@@ -216,9 +217,9 @@ class GitConfig(object):
     """Resolve any url.*.insteadof references.
     """
     for new_url in self.GetSubSections('url'):
-      for old_url in self.GetString('url.%s.insteadof' % new_url, True):
-        if old_url is not None and url.startswith(old_url):
-          return new_url + url[len(old_url):]
+      old_url = self.GetString('url.%s.insteadof' % new_url)
+      if old_url is not None and url.startswith(old_url):
+        return new_url + url[len(old_url):]
     return url
 
   @property
@@ -247,41 +248,50 @@ class GitConfig(object):
     return self._cache_dict
 
   def _Read(self):
-    d = self._ReadJson()
+    d = self._ReadPickle()
     if d is None:
       d = self._ReadGit()
-      self._SaveJson(d)
+      self._SavePickle(d)
     return d
 
-  def _ReadJson(self):
+  def _ReadPickle(self):
     try:
-      if os.path.getmtime(self._json) \
+      if os.path.getmtime(self._pickle) \
       <= os.path.getmtime(self.file):
-        os.remove(self._json)
+        os.remove(self._pickle)
         return None
     except OSError:
       return None
     try:
-      Trace(': parsing %s', self.file)
-      fd = open(self._json)
+      Trace(': unpickle %s', self.file)
+      fd = open(self._pickle, 'rb')
       try:
-        return json.load(fd)
+        return pickle.load(fd)
       finally:
         fd.close()
-    except (IOError, ValueError):
-      os.remove(self._json)
+    except EOFError:
+      os.remove(self._pickle)
+      return None
+    except IOError:
+      os.remove(self._pickle)
+      return None
+    except pickle.PickleError:
+      os.remove(self._pickle)
       return None
 
-  def _SaveJson(self, cache):
+  def _SavePickle(self, cache):
     try:
-      fd = open(self._json, 'w')
+      fd = open(self._pickle, 'wb')
       try:
-        json.dump(cache, fd, indent=2)
+        pickle.dump(cache, fd, pickle.HIGHEST_PROTOCOL)
       finally:
         fd.close()
-    except (IOError, TypeError):
-      if os.path.exists(self.json):
-        os.remove(self._json)
+    except IOError:
+      if os.path.exists(self._pickle):
+        os.remove(self._pickle)
+    except pickle.PickleError:
+      if os.path.exists(self._pickle):
+        os.remove(self._pickle)
 
   def _ReadGit(self):
     """
